@@ -1,0 +1,76 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Big Data Bot Mitigation Console</title>
+    <style>
+        body { font-family: 'JetBrains Mono', monospace; background: #0d1117; color: #c9d1d9; padding: 40px; }
+        .dashboard { max-width: 900px; margin: 0 auto; border: 1px solid #30363d; border-radius: 8px; padding: 20px; background: #161b22; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+        .status-card { padding: 40px; text-align: center; border-radius: 8px; margin: 20px 0; font-size: 2em; font-weight: bold; border: 2px solid #30363d; }
+        .human { background: #111d13; color: #3fb950; border-color: #238636; }
+        .bot { background: #2a1215; color: #f85149; border-color: #da3633; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.7; } }
+        .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .metric { background: #0d1117; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #30363d; }
+        .value { font-size: 2.5em; color: #58a6ff; }
+        .btn { width: 100%; padding: 15px; margin-top: 20px; cursor: pointer; background: #21262d; color: white; border: 1px solid #f0f6fc1a; border-radius: 6px; }
+        .btn:hover { background: #30363d; }
+        #log { margin-top: 20px; height: 100px; overflow-y: scroll; font-size: 0.8em; color: #8b949e; background: #010409; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <span>BOT_DEFENSE_v2.0</span>
+            <span id="ip-addr">--.-.-.--</span>
+        </div>
+
+        <div id="status-box" class="status-card human">SYSTEM_OK: HUMAN_DETECTED</div>
+
+        <div class="metrics">
+            <div class="metric">
+                <div>ML RISK SCORE</div>
+                <div id="score" class="value">0.00</div>
+            </div>
+            <div class="metric">
+                <div>THROTTLED</div>
+                <div id="throttled" class="value">NO</div>
+            </div>
+        </div>
+
+        <button class="btn" onclick="triggerRequest()">EXECUTE API REQUEST</button>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            document.getElementById('score').innerText = data.score.toFixed(2);
+            document.getElementById('ip-addr').innerText = data.ip;
+            const box = document.getElementById('status-box');
+            
+            if (data.status === 'BOT') {
+                box.innerText = 'WARNING: AUTOMATED_THREAT_DETECTED';
+                box.className = 'status-card bot';
+                document.getElementById('throttled').innerText = 'YES';
+            } else {
+                box.innerText = 'SYSTEM_OK: HUMAN_DETECTED';
+                box.className = 'status-card human';
+                document.getElementById('throttled').innerText = 'NO';
+            }
+        };
+
+        async function triggerRequest() {
+            const log = document.getElementById('log');
+            try {
+                const res = await fetch('/api/data');
+                const text = await res.status === 429 ? "THROTTLED" : "SUCCESS";
+                log.innerHTML += `<div>[${new Date().toLocaleTimeString()}] GET /api/data -> ${res.status} ${text}</div>`;
+                log.scrollTop = log.scrollHeight;
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>
