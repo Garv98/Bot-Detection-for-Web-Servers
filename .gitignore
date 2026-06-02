@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+data/raw/*.json
+data/raw/*.ndjson
+data/parquet/
+data/*.db
+data/*.db-*
+models/*.pkl
+*.duckdb
+.claude

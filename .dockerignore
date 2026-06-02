@@ -1,0 +1,11 @@
+# Keep the FastAPI image build context small. data/ and models/ are bind-mounted
+# at runtime, so they don't need to be copied into the image — and data/raw holds
+# the 3.2 GB dump which must never enter the build context.
+data/
+web/
+**/__pycache__/
+*.pyc
+.git/
+.env
+.pytest_cache/
+*.duckdb

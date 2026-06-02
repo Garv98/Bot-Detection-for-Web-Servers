@@ -1,0 +1,169 @@
+# Full bot-detection stack. Images chosen to match what runs reliably on this
+# host (embedded-ZooKeeper HBase + a Thrift sidecar; apache/superset 3.1).
+# Secrets come from the environment / a .env file (see .env.example).
+#
+#   FastAPI  -> http://localhost:8000
+#   Web UI   -> http://localhost:3000
+#   Superset -> http://localhost:8088
+#   HBase UI -> http://localhost:16010
+#   Spark UI -> http://localhost:8080   (only with the `etl` profile)
+
+name: bot-detection
+
+services:
+  # -------------------------------------------------------------------------
+  # HBase standalone — runs its OWN ZooKeeper on :2181 inside the container.
+  hbase:
+    image: bde2020/hbase-standalone
+    container_name: bd2-hbase
+    ports:
+      - "16010:16010"   # Master web UI
+      - "2181:2181"     # embedded ZooKeeper (used by the thrift sidecar)
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2181' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # Thrift gateway sidecar (same image) — happybase connects here on :9090.
+  hbase-thrift:
+    image: bde2020/hbase-standalone
+    container_name: bd2-hbase-thrift
+    depends_on:
+      - hbase
+    ports:
+      - "9090:9090"
+    environment:
+      - HBASE_CONF_hbase_zookeeper_quorum=hbase
+      - HBASE_CONF_hbase_zookeeper_property_clientPort=2181
+    volumes:
+      - ./scripts/hbase-thrift-init.sh:/work/hbase-thrift-init.sh:ro
+    command: ["bash", "/work/hbase-thrift-init.sh"]
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/9090' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 75s   # init script sleeps 60s before launching thrift
+
+  # -------------------------------------------------------------------------
+  fastapi:
+    build: .
+    image: bot-detection-api:latest
+    container_name: bd2-fastapi
+    depends_on:
+      hbase-thrift:
+        condition: service_healthy
+    environment:
+      - HBASE_HOST=hbase-thrift
+      - HBASE_PORT=9090
+      - HBASE_THRIFT_TRANSPORT=buffered
+      - MODELS_DIR=/app/models
+      - ALLOWLIST_PATH=/app/config/allowlist.txt
+      - BOT_EVENTS_DB=/app/data/bot_events.db
+      - FEATURES_CSV=/app/data/parquet/features.csv
+      - FEATURES_PARQUET=/app/data/parquet/features.parquet/**/*.parquet
+      - METRICS_PATH=/app/models/metrics.json
+      - GT_METRICS_PATH=/app/models/groundtruth_metrics.json
+      - RATE_LIMIT_IP=${RATE_LIMIT_IP:-100/minute}
+      - RATE_LIMIT_CIDR=${RATE_LIMIT_CIDR:-500/minute}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      # NOTE: models/ is baked into the image (COPY) and intentionally NOT
+      # bind-mounted — a lazy/virtualised host mount (e.g. OneDrive-backed)
+      # can enumerate empty at process start and race the import-time model
+      # load. Rebuild the image after retraining to ship new models.
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # -------------------------------------------------------------------------
+  web:
+    build: ./web
+    image: bot-detection-web:latest
+    container_name: bd2-web
+    depends_on:
+      - fastapi
+    ports:
+      - "3000:3000"
+    restart: always
+
+  # -------------------------------------------------------------------------
+  superset:
+    image: apache/superset:3.1.0
+    container_name: bd2-superset
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:?set SUPERSET_SECRET_KEY in .env}
+      - ADMIN_USERNAME=${SUPERSET_ADMIN:-admin}
+      - ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:?set SUPERSET_ADMIN_PASSWORD in .env}
+      - ADMIN_EMAIL=admin@bot-detection.local
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./data:/app/data
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        superset db upgrade
+        superset fab create-admin \
+          --username "$$ADMIN_USERNAME" --firstname Admin --lastname User \
+          --email "$$ADMIN_EMAIL" --password "$$ADMIN_PASSWORD" || true
+        superset init
+        exec /usr/bin/run-server.sh
+    restart: always
+
+  # One-shot: waits for Superset, then creates the DB connection, dataset,
+  # charts and the "BotSentry — Live Operations" dashboard via the REST API.
+  superset-bootstrap:
+    image: python:3.11-slim
+    container_name: bd2-superset-bootstrap
+    depends_on:
+      - superset
+    volumes:
+      - ./superset:/work/superset:ro
+    working_dir: /work
+    command: >
+      python superset/bootstrap.py
+        --superset-url http://superset:8088
+        --username ${SUPERSET_ADMIN:-admin}
+        --password ${SUPERSET_ADMIN_PASSWORD:-admin}
+        --db-uri sqlite:////app/data/bot_events.db
+    restart: "no"
+
+  # -------------------------------------------------------------------------
+  # Opt-in PySpark ETL runner:  docker compose --profile etl run --rm spark-etl
+  spark-etl:
+    image: apache/spark:3.5.0-scala2.12-java11-python3-ubuntu
+    container_name: bd2-spark-etl
+    profiles: ["etl"]
+    working_dir: /work
+    volumes:
+      - .:/work
+    environment:
+      - SPARK_HOME=/opt/spark
+      - PYTHONPATH=/work:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
+    ports:
+      - "8080:8080"
+    # Convert the raw dump to NDJSON, then run the feature ETL with Spark.
+    entrypoint: ["bash", "-lc"]
+    command:
+      - >
+        python3 spark/prepare_data.py --input data/raw/public_v2.json --output data/raw/logs.ndjson &&
+        /opt/spark/bin/spark-submit spark/etl.py --input data/raw/logs.ndjson --output data/parquet
+
+volumes:
+  superset_home:

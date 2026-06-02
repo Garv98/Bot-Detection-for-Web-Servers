@@ -1,0 +1,22 @@
+# ---- Core ML / data ----
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+joblib>=1.3
+
+# ---- Spark ETL ----
+pyspark>=3.4,<3.6
+pyarrow>=12.0          # parquet + csv interchange
+
+# ---- HBase ----
+happybase>=1.2.0       # Thrift client for HBase
+
+# ---- API ----
+fastapi>=0.110
+uvicorn[standard]>=0.27
+slowapi>=0.1.9         # rate limiting
+pydantic>=2.0
+
+# ---- Superset / analytics connector ----
+duckdb>=0.10           # query parquet for Superset/DuckDB connector
+# superset is run via its own Docker image; not pip-installed here

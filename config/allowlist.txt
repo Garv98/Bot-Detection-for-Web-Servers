@@ -1,0 +1,7 @@
+# Known-good IPs that skip scoring entirely (one per line).
+# Monitoring agents, CDN health checks, internal load balancers, etc.
+# Lines starting with '#' and blank lines are ignored.
+# Exact IPs or /24 CIDR blocks (e.g. 10.0.0.0/24) are both supported.
+127.0.0.1
+::1
+10.0.0.0/24
