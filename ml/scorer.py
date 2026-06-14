@@ -16,6 +16,7 @@ import math
 import os
 import re
 from collections import Counter
+from functools import lru_cache
 from typing import Any, Optional
 
 import joblib
@@ -42,14 +43,22 @@ def shannon_entropy(text: Optional[str]) -> float:
     return float(-sum((c / n) * math.log2(c / n) for c in counts.values()))
 
 
-def ua_features(useragent: Optional[str]) -> dict[str, float]:
-    ua = useragent or ""
+@lru_cache(maxsize=4096)
+def _ua_features_cached(ua: str) -> tuple[float, float, float]:
+    """Expensive regex + entropy work, cached per exact UA string. The same UA
+    is often seen thousands of times, so this is a large win under load."""
     is_bot = 1.0 if BOT_UA_REGEX.search(ua) else 0.0
     is_browser = 1.0 if (BROWSER_UA_REGEX.search(ua) and not is_bot) else 0.0
+    return is_bot, is_browser, shannon_entropy(ua)
+
+
+def ua_features(useragent: Optional[str]) -> dict[str, float]:
+    # Build a fresh dict each call (callers may merge/mutate) from cached work.
+    is_bot, is_browser, entropy = _ua_features_cached(useragent or "")
     return {
         "ua_is_known_bot": is_bot,
         "ua_is_browser": is_browser,
-        "ua_entropy": shannon_entropy(ua),
+        "ua_entropy": entropy,
     }
 
 
@@ -120,6 +129,25 @@ def signal_breakdown(feats: dict[str, Any]) -> list[dict[str, Any]]:
     return signals
 
 
+# Risk above this (for an IP already judged a bot) is blocked outright; bots
+# below it are throttled instead. Tunable via env at the call site.
+BLOCK_THRESHOLD = float(os.environ.get("BLOCK_THRESHOLD", "0.85"))
+
+
+def decide(risk_score: float, is_bot: bool, allowlisted: bool = False) -> dict[str, Any]:
+    """Map a risk score + verdict to a WAF action — the 'Decision Output' stage
+    of the architecture: ALLOW (normal flow, 200) vs BLOCK / THROTTLE (429)."""
+    if allowlisted:
+        return {"decision": "allow", "http_status": 200, "action": "Allowlisted — normal flow"}
+    if is_bot and risk_score >= BLOCK_THRESHOLD:
+        return {"decision": "block", "http_status": 429,
+                "action": "High-confidence bot — request blocked"}
+    if is_bot:
+        return {"decision": "throttle", "http_status": 429,
+                "action": "Bot detected — rate-limited (HTTP 429)"}
+    return {"decision": "allow", "http_status": 200, "action": "Human traffic — normal flow"}
+
+
 class ModelScorer:
     def __init__(self, models_dir: str = "models") -> None:
         self.models_dir = models_dir
@@ -184,6 +212,27 @@ class ModelScorer:
         known_bot = float(feats.get("ua_is_known_bot", 0.0) or 0.0)
         proba = 0.9 if (known_bot or rate_404 > 0.5) else 0.1
         return proba, proba >= self.threshold, "heuristic: known-bot UA or rate_404>0.5"
+
+    def score_batch(self, profiles: list[dict[str, Any]]) -> list[tuple[float, bool, str]]:
+        """Vectorised scoring: one ``predict_proba`` call for the whole batch
+        instead of one per row. Returns a list of (risk_score, is_bot, reason)
+        aligned with ``profiles``."""
+        if not profiles:
+            return []
+        if self.ready:
+            matrix = np.asarray(
+                [[float(p.get(col, 0.0) or 0.0) for col in self.feature_columns] for p in profiles],
+                dtype=float,
+            )
+            probas = self.model.predict_proba(matrix)[:, 1]
+            out: list[tuple[float, bool, str]] = []
+            for feats, proba in zip(profiles, probas):
+                proba = float(proba)
+                is_bot = proba >= self.threshold
+                out.append((round(proba, 4), bool(is_bot), self._explain(feats, proba)))
+            return out
+        # Heuristic fallback row-by-row (cheap; no model on disk).
+        return [self.score(features=p) for p in profiles]
 
     def _explain(self, feats: dict[str, Any], proba: float) -> str:
         reasons = []

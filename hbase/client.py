@@ -192,11 +192,14 @@ class HBaseClient:
     def _op(self, fn):
         """Run an HBase op; on a dropped/stale Thrift socket, reconnect once
         and retry. Long-lived happybase connections go stale (the gateway
-        closes idle sockets) and raise BrokenPipeError/TTransportException —
-        a single reconnect makes the API resilient to that."""
+        closes idle sockets, or the HBase master restarts under it) and raise a
+        variety of errors — BrokenPipeError/OSError, EOFError, or thriftpy2's
+        ``TTransportException`` (which is *not* an OSError). happybase returns
+        ``{}`` for a missing row rather than raising, so any exception here means
+        a transport/connection problem: reconnect once and retry."""
         try:
             return fn()
-        except (OSError, EOFError, ConnectionError) as exc:
+        except Exception as exc:  # noqa: BLE001 - treat any error as a stale conn
             try:
                 self.connect()
                 return fn()

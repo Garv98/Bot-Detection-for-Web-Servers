@@ -70,6 +70,9 @@ class EventLog:
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
+        # NORMAL is safe under WAL and substantially faster for the high write
+        # volume of the live event log (only loses the very last txn on power loss).
+        conn.execute("PRAGMA synchronous=NORMAL;")
         return conn
 
     def _init_schema(self) -> None:
@@ -104,6 +107,33 @@ class EventLog:
             )
             return int(cur.lastrowid)
 
+    def log_events_batch(self, events: list[dict[str, Any]]) -> int:
+        """Insert many events in a single transaction. Each dict accepts the
+        same keys as ``log_event``. Far cheaper than calling ``log_event`` in a
+        loop (one connection + one commit instead of N). Returns rows written."""
+        if not events:
+            return 0
+        rows = []
+        for e in events:
+            ts = time.time() if e.get("timestamp") is None else e["timestamp"]
+            is_bot = e.get("is_bot")
+            ip = e["ip"]
+            rows.append((
+                ip, ts, e.get("path"), e.get("useragent"), e.get("risk_score"),
+                None if is_bot is None else int(is_bot),
+                e.get("status_code"), e.get("bytes_sent"),
+                session_id(ip, ts), cidr_block(ip),
+            ))
+        with self._connect() as conn:
+            conn.executemany(
+                """INSERT INTO bot_events
+                   (ip, timestamp, path, useragent, risk_score, is_bot,
+                    status_code, bytes_sent, session_id, cidr_block)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+        return len(rows)
+
     def stats(self, top_n: int = 10) -> dict[str, Any]:
         """Aggregate stats for the admin endpoint."""
         with self._connect() as conn:
@@ -130,6 +160,100 @@ class EventLog:
             "bot_ratio": round(bot_ratio, 4),
             "top_flagged": [dict(r) for r in top],
         }
+
+    def summary(self) -> dict[str, Any]:
+        """Single-object live rollup for the dashboard header."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*)                                  AS total_events,
+                          COALESCE(SUM(CASE WHEN is_bot=1 THEN 1 ELSE 0 END), 0) AS bot_events,
+                          COUNT(DISTINCT ip)                        AS unique_ips,
+                          COUNT(DISTINCT path)                      AS unique_paths,
+                          MAX(timestamp)                            AS last_event_at
+                   FROM bot_events"""
+            ).fetchone()
+        total = row["total_events"] or 0
+        bots = row["bot_events"] or 0
+        return {
+            "total_events": int(total),
+            "bot_events": int(bots),
+            "human_events": int(total - bots),
+            "bot_ratio": round(bots / total, 4) if total else 0.0,
+            "unique_ips": int(row["unique_ips"] or 0),
+            "unique_paths": int(row["unique_paths"] or 0),
+            "last_event_at": float(row["last_event_at"]) if row["last_event_at"] is not None else None,
+        }
+
+    def get_recent(
+        self,
+        limit: int = 12,
+        offset: int = 0,
+        since_id: Optional[int] = None,
+    ) -> list[dict[str, Any]]:
+        """Most recent events, newest first. ``since_id`` returns only rows with
+        a higher id (efficient incremental polling); ``offset`` paginates."""
+        clause = "WHERE id > ?" if since_id is not None else ""
+        params: list[Any] = [since_id] if since_id is not None else []
+        params += [int(limit), int(offset)]
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT id, ip, timestamp, path, risk_score, is_bot, cidr_block
+                    FROM bot_events {clause}
+                    ORDER BY id DESC LIMIT ? OFFSET ?""",
+                params,
+            ).fetchall()
+        return [
+            {"id": int(r["id"]), "ip": r["ip"], "t": float(r["timestamp"]),
+             "path": r["path"], "risk_score": r["risk_score"],
+             "is_bot": int(r["is_bot"] or 0), "cidr_block": r["cidr_block"]}
+            for r in rows
+        ]
+
+    def clear(self) -> int:
+        """Delete all events and reset the autoincrement counter. Returns the
+        number of rows removed."""
+        with self._connect() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM bot_events").fetchone()[0]
+            conn.execute("DELETE FROM bot_events")
+            conn.execute("DELETE FROM sqlite_sequence WHERE name='bot_events'")
+        return int(n)
+
+    def top_paths(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Most-requested paths, split bot vs human."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT COALESCE(path, '—')                         AS path,
+                          COUNT(*)                                    AS total,
+                          SUM(CASE WHEN is_bot=1 THEN 1 ELSE 0 END)   AS bots,
+                          SUM(CASE WHEN is_bot=0 THEN 1 ELSE 0 END)   AS humans
+                   FROM bot_events
+                   GROUP BY path ORDER BY total DESC LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+        return [{"path": r["path"], "total": int(r["total"]),
+                 "bots": int(r["bots"] or 0), "humans": int(r["humans"] or 0)} for r in rows]
+
+    def cidr_activity(self, limit: int = 15) -> list[dict[str, Any]]:
+        """Top /24 subnets by event count, with bot ratio (WAF-ready intel)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT cidr_block,
+                          COUNT(*)                                  AS total,
+                          SUM(CASE WHEN is_bot=1 THEN 1 ELSE 0 END) AS bots,
+                          SUM(CASE WHEN is_bot=0 THEN 1 ELSE 0 END) AS humans
+                   FROM bot_events
+                   WHERE cidr_block IS NOT NULL AND cidr_block != ''
+                   GROUP BY cidr_block ORDER BY total DESC LIMIT ?""",
+                (int(limit),),
+            ).fetchall()
+        out = []
+        for r in rows:
+            total = int(r["total"])
+            bots = int(r["bots"] or 0)
+            out.append({"cidr_block": r["cidr_block"], "total": total, "bots": bots,
+                        "humans": int(r["humans"] or 0),
+                        "bot_ratio": round(bots / total, 4) if total else 0.0})
+        return out
 
 
 if __name__ == "__main__":

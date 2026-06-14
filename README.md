@@ -1,15 +1,94 @@
-# Bot Detection Pipeline
+# 🤖 Bot Detection for Web Servers
 
-End-to-end web-robot detection over the Zenodo *Web robot detection* dataset
-(`search.lib.auth.gr` access logs): Spark ETL → ML training → HBase profile
-store → FastAPI scoring service → SQLite live event log → Superset dashboards
-→ an interactive **Next.js** front end, all orchestrated with Docker Compose.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-3.4%2B-E25A1C?logo=apachespark&logoColor=white)](https://spark.apache.org/)
+[![HBase](https://img.shields.io/badge/HBase-Thrift-D22128?logo=apache&logoColor=white)](https://hbase.apache.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+
+End-to-end **web-robot detection** pipeline over the Zenodo *Web robot
+detection* dataset (`search.lib.auth.gr` access logs):
+
+**Spark ETL → ML training → HBase profile store → FastAPI scoring service →
+SQLite live event log → Superset dashboards → an interactive Next.js front
+end** — all orchestrated with Docker Compose.
 
 > Trained and verified on the **full 4,091,155-request / 26,966-IP** dataset
 > (Feb 28 – Mar 27 2018): 2,309 IPs labelled robot (8.6%).
 
+---
+
+## Table of contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Requirements](#requirements)
+- [Quick start (local, no Docker)](#quick-start-local-no-docker)
+- [Quick start (Docker)](#quick-start-docker)
+- [Features computed per IP](#features-computed-per-ip-phase-2)
+- [ML training](#ml-training-phase-3)
+- [HBase schema](#hbase-schema-phase-4--table-bot_profiles-row-key--ip)
+- [API reference](#api-phase-5)
+- [SQLite event log](#sqlite-event-log-phase-6--bot_events)
+- [Superset dashboards](#superset-phase-7)
+- [Web UI](#web-ui-nextjs)
+- [Configuration / secrets](#configuration--secrets)
+- [Smoke tests](#smoke-tests)
+
+---
+
+## Overview
+
+This project takes raw web-server access logs, turns them into per-IP
+behavioural features, trains models that distinguish bots from humans, and
+serves real-time risk scores through an API and an interactive dashboard:
+
+- **Spark / pandas ETL** — stream a 3.2 GB raw JSON dump into per-IP feature
+  tables (Parquet + CSV), no JVM required.
+- **ML models** — RandomForest vs GradientBoosting, both a live behavioural
+  model and an honest ground-truth benchmark (recall 0.976 @ precision 0.889,
+  AUC 0.995).
+- **HBase profile store** — per-IP stats, scores, and alerts with TTL'd alert
+  records, via a happybase Thrift client (with an in-memory fake mode).
+- **FastAPI scoring service** — `/api/check`, `/api/score`, bulk scoring,
+  CIDR-aware rate limiting, and an IP allowlist.
+- **SQLite live event log** — every scored request, with session and CIDR
+  derivation, queryable for analytics.
+- **Superset dashboards** — 7 charts over live SQLite events and Parquet
+  features via DuckDB.
+- **Next.js web console** — overview, detection playground, admin dashboard,
+  and model insights, all backed by the live API.
+
+## Architecture
+
 ```
-bot-detection/
+Access logs (public_v2.json)
+        │
+        ▼
+  Spark / pandas ETL  ──────────────►  features.parquet / features.csv
+        │
+        ▼
+  ML training (RandomForest / GradientBoosting)
+        │
+        ▼
+  HBase profile store  ◄──────────────  FastAPI scoring service
+        │                                       │
+        ▼                                       ▼
+  Alerts (TTL'd)                    SQLite event log (bot_events)
+                                                 │
+                              ┌──────────────────┴───────────────────┐
+                              ▼                                       ▼
+                      Superset dashboards               Next.js web console
+                                                  (overview / playground /
+                                                   dashboard / model insights)
+```
+
+## Project structure
+
+```
+BDT_2/
 ├── data/raw/              # Zenodo dataset (public_v2.json) + derived NDJSON
 ├── data/parquet/          # Spark/ETL output: features.parquet + features.csv
 ├── models/                # best_model.pkl, metrics.json, threshold.txt
@@ -28,19 +107,20 @@ bot-detection/
 │   └── analytics.py       # dashboard queries (DuckDB/Parquet) + traffic simulator
 ├── config/allowlist.txt   # known-good IPs (skip scoring)
 ├── superset/setup.sql     # 7 chart-defining SQL queries
-├── web/                   # Next.js 16 + TS front end (overview/playground/dashboard/model)
-├── Dockerfile             # FastAPI serving image
-├── docker-compose.yml     # spark master+worker, hbase, fastapi, superset
+├── web/                    # Next.js 16 + TS front end (overview/playground/dashboard/model)
+├── Dockerfile              # FastAPI serving image
+├── docker-compose.yml      # spark master+worker, hbase, fastapi, superset, web
 └── requirements.txt
 ```
 
 ## Requirements
 
-* Python 3.10+
-* For `spark/etl.py`: a JVM (Java 8/11/17) + PySpark 3.4+. **If you have no
+- Python 3.10+
+- For `spark/etl.py`: a JVM (Java 8/11/17) + PySpark 3.4+. **If you have no
   JVM, use `spark/etl_pandas.py`** — it produces an identical `features.csv`
   and partitioned Parquet so the rest of the pipeline runs unchanged.
-* Docker (for the full stack).
+- Docker (for the full stack).
+- Node.js 18+ (for the web UI).
 
 ```bash
 pip install -r requirements.txt
@@ -89,16 +169,16 @@ docker compose up --build   # brings up hbase + thrift sidecar + fastapi + web +
 
 Services & images (chosen to match what runs reliably on this host):
 
-* **hbase** — `bde2020/hbase-standalone` (embedded ZooKeeper on :2181).
-* **hbase-thrift** — same image, sidecar running `scripts/hbase-thrift-init.sh`;
+- **hbase** — `bde2020/hbase-standalone` (embedded ZooKeeper on :2181).
+- **hbase-thrift** — same image, sidecar running `scripts/hbase-thrift-init.sh`;
   it waits for the master, then `hbase thrift start`. happybase connects here on
   :9090 (buffered transport). `fastapi` waits for this to become healthy.
-* **fastapi** — built from `Dockerfile`. **Trained models are baked into the
+- **fastapi** — built from `Dockerfile`. **Trained models are baked into the
   image** (not bind-mounted) so the import-time model load never races a lazy
   host mount; `data/` and `config/` are mounted. Rebuild after retraining.
-* **web** — `web/Dockerfile`, Next.js standalone server on :3000.
-* **superset** — `apache/superset:3.1.0` with `superset/superset_config.py`.
-* **spark-etl** — opt-in, `apache/spark`. Run the full Spark ETL on demand:
+- **web** — `web/Dockerfile`, Next.js standalone server on :3000.
+- **superset** — `apache/superset:3.1.0` with `superset/superset_config.py`.
+- **spark-etl** — opt-in, `apache/spark`. Run the full Spark ETL on demand:
   `docker compose --profile etl run --rm spark-etl`.
 
 > **Port note:** an earlier version of this project may still be running
@@ -207,18 +287,18 @@ importances (from `metrics.json`), and an alert-replay scatter.
 ## Web UI (Next.js)
 
 An interactive console in [`web/`](web/) (Next.js 16, TypeScript, Tailwind,
-Recharts) built to demo the project to evaluators. Four routes:
+Recharts, Framer Motion) built to demo the project to evaluators. Four routes:
 
-* **Overview** — hero, live dataset stats, an animated architecture pipeline,
+- **Overview** — hero, live dataset stats, an animated architecture pipeline,
   and a bot-vs-human behavioural scatter (request-rate × UA entropy).
-* **Detection Playground** — send a live request (IP / User-Agent / path) and
+- **Detection Playground** — send a live request (IP / User-Agent / path) and
   watch an animated risk gauge + verdict; one-click presets (Googlebot, Chrome,
   Python scraper, curl) and a bulk-scoring table.
-* **Admin Dashboard** — auto-refreshing throughput, bot-vs-human stacked area,
+- **Admin Dashboard** — auto-refreshing throughput, bot-vs-human stacked area,
   top flagged IPs, population-by-rate distribution, and an hour×weekday activity
   heatmap. A **Simulate traffic** button replays real IPs through the scorer so
   the live charts fill in on demand.
-* **Model Insights** — RF vs GBT comparison table, chosen threshold, and the
+- **Model Insights** — RF vs GBT comparison table, chosen threshold, and the
   feature-importance ranking.
 
 ```bash

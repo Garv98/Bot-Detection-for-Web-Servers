@@ -1,0 +1,288 @@
+/* Fonts loaded via <link> in app/layout.tsx (single source — no duplicate import). */
+@import "tailwindcss";
+
+:root {
+  /* Premium light glassmorphism — frosted surfaces over an animated gradient
+     field. Chrome is translucent white; color reserved for meaning. */
+  --bg:       #eef2ff;
+  --panel:    rgba(255, 255, 255, 0.62);   /* frosted glass card */
+  --panel-2:  rgba(255, 255, 255, 0.5);    /* inputs / nested */
+  --panel-3:  rgba(99, 102, 241, 0.10);    /* hover / active tint */
+
+  /* Borders — bright glass edge */
+  --border:       rgba(255, 255, 255, 0.6);
+  --border-focus: rgba(99, 102, 241, 0.55);
+
+  /* Text (contrast-audited for glass) */
+  --text:    #1b2138;
+  --text-2:  #3a4666;
+  --muted:   #566179;
+  --muted-2: #8893ad;
+
+  /* Semantic colors */
+  --accent:        #6366f1;   /* indigo — primary brand */
+  --accent-2:      #4f46e5;   /* darker for hover */
+  --accent-blue:   #2563eb;   /* electric blue */
+  --accent-violet: #8b5cf6;
+  --sky:           #38bdf8;
+  --on-accent:     #ffffff;
+  --bot:      #ef4444;   /* threat red */
+  --bot-dim:  rgba(239, 68, 68, 0.12);
+  --human:    #2563eb;   /* electric blue */
+  --safe:     #10b981;   /* emerald */
+  --safe-dim: rgba(16, 185, 129, 0.12);
+  --warn:     #f59e0b;   /* amber */
+  --info:     #6366f1;   /* indigo */
+
+  /* Typography */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radius scale */
+  --radius-sm: 8px;
+  --radius:    14px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+
+  /* Glass */
+  --glass-blur: 14px;
+
+  /* Shadow — soft, indigo-tinted (replaces black shadows) */
+  --shadow-sm: 0 2px 10px rgba(30, 41, 99, 0.06);
+  --shadow:    0 10px 30px rgba(30, 41, 99, 0.10);
+  --shadow-lg: 0 24px 70px rgba(49, 46, 129, 0.16);
+}
+
+/* Premium dark glass — deep indigo/slate, frosted, soft glows. */
+:root[data-theme="dark"] {
+  --bg:       #0b1020;
+  --panel:    rgba(34, 42, 74, 0.55);
+  --panel-2:  rgba(34, 42, 74, 0.42);
+  --panel-3:  rgba(129, 140, 248, 0.16);
+  --border:       rgba(148, 163, 255, 0.14);
+  --border-focus: rgba(129, 140, 248, 0.55);
+  --text:    #eef1ff;
+  --text-2:  #c0c9ee;
+  --muted:   #97a1cc;
+  --muted-2: #69739c;
+  --accent:        #818cf8;
+  --accent-2:      #a5b4fc;
+  --accent-blue:   #60a5fa;
+  --accent-violet: #a78bfa;
+  --sky:           #38bdf8;
+  --on-accent:     #0b1020;
+  --bot:      #fb7185;
+  --bot-dim:  rgba(251, 113, 133, 0.16);
+  --human:    #60a5fa;
+  --safe:     #34d399;
+  --safe-dim: rgba(52, 211, 153, 0.16);
+  --warn:     #fbbf24;
+  --info:     #818cf8;
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.40);
+  --shadow:    0 12px 34px rgba(0, 0, 0, 0.50);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.62);
+}
+:root[data-theme="dark"] body::before {
+  background:
+    radial-gradient(45% 55% at 15% 8%, rgba(99, 102, 241, 0.28), transparent 70%),
+    radial-gradient(45% 55% at 88% 6%, rgba(56, 189, 248, 0.18), transparent 70%),
+    radial-gradient(55% 60% at 80% 95%, rgba(139, 92, 246, 0.22), transparent 72%),
+    radial-gradient(50% 55% at 8% 92%, rgba(37, 99, 235, 0.18), transparent 72%),
+    linear-gradient(135deg, #090d1a, #0b1020 50%, #0a1226);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-bot: var(--bot);
+  --color-human: var(--human);
+  --font-mono: var(--font-mono);
+  --font-sans: var(--font-sans);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+body { min-height: 100vh; position: relative; }
+
+/* Static multi-gradient field behind all content. Static (not animated) so
+   the cards' backdrop-filter blur is computed once, not every frame. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(40% 50% at 15% 10%, rgba(99, 102, 241, 0.20), transparent 70%),
+    radial-gradient(45% 55% at 85% 8%, rgba(56, 189, 248, 0.18), transparent 70%),
+    radial-gradient(50% 60% at 75% 95%, rgba(139, 92, 246, 0.14), transparent 72%),
+    radial-gradient(45% 55% at 10% 90%, rgba(96, 165, 250, 0.14), transparent 72%),
+    linear-gradient(135deg, #f8fafc, #eef2ff 45%, #f0f9ff);
+}
+
+.card {
+  background: var(--panel);
+  backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease, border-color .15s ease;
+}
+.card:hover { box-shadow: var(--shadow-lg); }
+.card.lift:hover { transform: translateY(-2px); }
+
+.mono { font-family: var(--font-mono); }
+
+.glow-bot  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--bot) 45%, transparent), 0 12px 36px color-mix(in srgb, var(--bot) 22%, transparent); }
+.glow-safe { box-shadow: 0 0 0 1px color-mix(in srgb, var(--safe) 45%, transparent), 0 12px 36px color-mix(in srgb, var(--safe) 20%, transparent); }
+
+/* Glowing accent border for active cards */
+.accent-glow {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 12px 30px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Threat level bar — used in live feed rows */
+.threat-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--safe), var(--warn), var(--bot));
+}
+
+/* Monospace data table cells */
+.data-cell { font-family: var(--font-mono); font-size: 12px; }
+
+/* Status indicator pill */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+}
+
+/* IP address display */
+.ip-addr {
+  font-family: var(--font-mono);
+  background: var(--panel-3);
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--accent-2);
+  font-weight: 600;
+}
+
+/* Severity stripe — left border color indicator */
+.sev-danger { border-left: 3px solid var(--bot);  --c: var(--bot); }
+.sev-warn   { border-left: 3px solid var(--warn); --c: var(--warn); }
+.sev-ok     { border-left: 3px solid var(--safe); --c: var(--safe); }
+.sev-info   { border-left: 3px solid var(--info); --c: var(--info); }
+
+/* Nav links — left active bar, no fill */
+.nav-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 10px; color: var(--text-2);
+  font-size: 14px; position: relative; transition: all .15s ease;
+}
+.nav-link::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 0; border-radius: 2px; background: var(--accent);
+  transition: height .15s ease;
+}
+.nav-link:hover { background: var(--panel-3); color: var(--text); }
+.nav-link.active { background: var(--panel-3); color: var(--accent-2); }
+.nav-link.active::before { height: 60%; }
+
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.live-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.28); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.42); }
+::-webkit-scrollbar-track { background: transparent; }
+
+input, textarea, select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+}
+input::placeholder, textarea::placeholder { color: var(--muted-2); }
+input:focus, textarea:focus, select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.18);
+}
+
+/* Visible keyboard focus ring for a11y on all interactive elements */
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button { cursor: pointer; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* --- loading skeletons --- */
+.skeleton {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel-3) 37%, var(--panel-2) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+/* --- entrance animations --- */
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.fade-up { animation: fade-up .45s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes pop { 0% { transform: scale(.96); opacity: .4; } 100% { transform: scale(1); opacity: 1; } }
+.pop { animation: pop .35s ease both; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* newly-arrived feed row flash */
+@keyframes row-flash {
+  0% { background: var(--safe-dim); }
+  100% { background: transparent; }
+}
+.row-flash { animation: row-flash 2s ease-out both; }
+
+/* radar / threat hero pulse */
+@keyframes hero-pulse {
+  0%,100% { opacity: 0.06; transform: scale(1); }
+  50% { opacity: 0.13; transform: scale(1.15); }
+}
+.hero-pulse { animation: hero-pulse 6s ease-in-out infinite; }
+
+.hoverable:hover { border-color: var(--border-focus); }
+.row-hover:hover { background: var(--panel-3); }
+
+/* responsive two-up grid — collapses to one column on narrow screens */
+.auto2 { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); }
+
+/* architecture pipeline — data-flow dots travelling along connectors */
+@keyframes flow-dot {
+  0%   { left: -4px;  opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+.flow-dot {
+  position: absolute; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
+  border-radius: 50%; background: var(--accent-blue);
+  box-shadow: 0 0 8px var(--accent-blue);
+  animation: flow-dot 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; }
+  .live-dot, .hero-pulse, .skeleton, .fade-up, .pop, .spin, .row-flash { animation: none !important; }
+  .flow-dot { animation: none; opacity: .7; left: 45%; }
+}
